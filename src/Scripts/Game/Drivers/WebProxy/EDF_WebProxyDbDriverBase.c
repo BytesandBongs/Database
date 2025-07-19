@@ -10,7 +10,10 @@ class EDF_WebProxyConnectionInfoBase : EDF_DbConnectionInfoBase
 	[Attribute(desc: "Use TLS/SSL to connect to the web proxy.")]
 	bool m_bSecureConnection;
 
-	[Attribute(desc: "Additional parameters added to the url with ...&key=value e.g. api keys.")]
+	[Attribute(desc: "Custom headers for all requests e.g. api keys.")]
+	ref array<ref EDF_WebProxyParameter> m_aHeaders;
+
+	[Attribute(desc: "Additional parameters added to the url with ...&key=value")]
 	ref array<ref EDF_WebProxyParameter> m_aParameters;
 
 	//------------------------------------------------------------------------------------------------
@@ -20,6 +23,12 @@ class EDF_WebProxyConnectionInfoBase : EDF_DbConnectionInfoBase
 
 		if (m_sDatabaseName.Length() == connectionString.Length())
 			return; // No other params
+
+		if (!m_aHeaders)
+			m_aHeaders = {};
+
+		if (!m_aParameters)
+			m_aParameters = {};
 
 		array<string> keyValuePairs();
 		int paramsStart = m_sDatabaseName.Length() + 1;
@@ -63,10 +72,41 @@ class EDF_WebProxyConnectionInfoBase : EDF_DbConnectionInfoBase
 					m_bSecureConnection = valueLower == "1" || valueLower == "true" || valueLower == "yes";
 					break;
 				}
-
-				default:
+				
+				case "headers":
+				case "parameters":
 				{
+					array<string> kvs();
+					value.Split(",", kvs, true);
+					if ((kvs.Count() % 2) != 0)
+					{
+						Debug.Error(string.Format("Invalid '%1' connection info parameter. Not all keys have a value!", key));
+						break;
+					}
+					
+					bool isHeaders = keyLower == "headers";
+					
+					for (int nKey = 0, count = kvs.Count() - 1; nKey < count; nKey+=2)
+					{
+						auto param = new EDF_WebProxyParameter(kvs.Get(nKey), kvs.Get(nKey + 1));
+
+						if (isHeaders)
+						{
+							m_aHeaders.Insert(param);
+							continue;
+						}
+						
+						m_aParameters.Insert(param);
+					}
+					break;
+				}
+				
+				default: 
+				{
+					// Backwards compatiblity, will remove it at some point
 					m_aParameters.Insert(new EDF_WebProxyParameter(key, value));
+
+					//Debug.Error(string.Format("Unknown parameter '%1'='%2' in connection info.", key, value));
 				}
 			}
 		}
@@ -95,7 +135,7 @@ sealed class EDF_CustomDefaultTitle : BaseContainerCustomTitleField
 	}
 }
 
-[EDF_CustomDefaultTitle("m_sKey", "MyNewUrlParameter"), BaseContainerProps()]
+[EDF_CustomDefaultTitle("m_sKey", "UNCONFIGURED"), BaseContainerProps()]
 sealed class EDF_WebProxyParameter
 {
 	[Attribute()]
@@ -107,8 +147,12 @@ sealed class EDF_WebProxyParameter
 	//------------------------------------------------------------------------------------------------
 	void EDF_WebProxyParameter(string key, string value)
 	{
-		m_sKey = key;
-		m_sValue = value;
+		// Only use ctor params if they provide something. Otherwise it was set via attribute already.
+		if (key)
+			m_sKey = key;
+		
+		if (value)
+			m_sValue = value;
 	}
 }
 
@@ -119,11 +163,14 @@ sealed class EDF_WebProxyDbDriverCallback : RestCallback
 	protected ref EDF_DbOperationCallback m_pCallback;
 	protected typename m_tResultType;
 
+	protected string m_sVerb;
+	protected string m_sUrl;
+
 	//------------------------------------------------------------------------------------------------
 	override void OnSuccess(string data, int dataSize)
 	{
 		#ifdef PERSISTENCE_DEBUG
-		Print(string.Format("%1::OnSuccess(%2, %3)", this, dataSize, data), LogLevel.VERBOSE);
+		Print(string.Format("%1::OnSuccess(%2, %3) from %4:%5", this, dataSize, data, m_sVerb, m_sUrl), LogLevel.VERBOSE);
 		#endif
 
 		s_aSelfReferences.RemoveItem(this);
@@ -173,18 +220,12 @@ sealed class EDF_WebProxyDbDriverCallback : RestCallback
 		s_aSelfReferences.RemoveItem(this);
 
 		#ifdef PERSISTENCE_DEBUG
-		Print(string.Format("%1::OnError(%2(%3))", this, errorCode, typename.EnumToString(ERestResult, errorCode)), LogLevel.VERBOSE);
+		Print(string.Format("%1::OnError(%2) from %3:%4", this, typename.EnumToString(ERestResult, errorCode), m_sVerb, m_sUrl), LogLevel.ERROR);
 		#endif
 
 		EDF_EDbOperationStatusCode statusCode;
 		switch (errorCode)
 		{
-			case 14:
-			{
-				statusCode = EDF_EDbOperationStatusCode.FAILURE_ID_NOT_FOUND;
-				break;
-			}
-
 			default:
 			{
 				statusCode = EDF_EDbOperationStatusCode.FAILURE_UNKNOWN;
@@ -201,7 +242,7 @@ sealed class EDF_WebProxyDbDriverCallback : RestCallback
 		s_aSelfReferences.RemoveItem(this);
 
 		#ifdef PERSISTENCE_DEBUG
-		Print(string.Format("%1::OnTimeout()", this), LogLevel.VERBOSE);
+		Print(string.Format("%1::OnTimeout() from %2:%3", this, m_sVerb, m_sUrl), LogLevel.VERBOSE);
 		#endif
 
 		OnFailure(EDF_EDbOperationStatusCode.FAILURE_DB_UNAVAILABLE);
@@ -229,10 +270,12 @@ sealed class EDF_WebProxyDbDriverCallback : RestCallback
 	}
 
 	//------------------------------------------------------------------------------------------------
-	void EDF_WebProxyDbDriverCallback(EDF_DbOperationCallback callback, typename resultType = typename.Empty)
+	void EDF_WebProxyDbDriverCallback(EDF_DbOperationCallback callback, typename resultType = typename.Empty, string verb = string.Empty, string url = string.Empty)
 	{
 		m_pCallback = callback;
 		m_tResultType = resultType;
+		m_sVerb = verb;
+		m_sUrl = url;
 		s_aSelfReferences.Insert(this);
 	};
 }
@@ -290,6 +333,38 @@ class EDF_WebProxyDbDriver : EDF_DbDriver
 		url += string.Format("://%1:%2/%3/", webConnectInfo.m_sProxyHost, webConnectInfo.m_iProxyPort, webConnectInfo.m_sDatabaseName);
 		m_pContext = GetGame().GetRestApi().GetContext(url);
 
+		string headers;
+		bool hasContentType, hasUserAgent;
+		if (webConnectInfo.m_aHeaders)
+		{
+			foreach (EDF_WebProxyParameter header : webConnectInfo.m_aHeaders)
+			{
+				if (!hasContentType && (header.m_sKey.Compare("Content-Type", false) == 0))
+					hasContentType = true;
+				
+				if (!hasUserAgent && (header.m_sKey.Compare("User-Agent", false) == 0))
+					hasUserAgent = true;
+				
+				if (!headers.IsEmpty())
+					headers += ",";
+				
+				headers += string.Format("%1,%2", header.m_sKey, header.m_sValue);
+			}
+		}
+		
+		if (!hasContentType)
+		{
+			if (!headers.IsEmpty())
+				headers += ",";
+
+			headers += "Content-Type,application/json";
+		}
+
+		if (!hasUserAgent)
+			headers += ",User-Agent,AR-EDF";
+
+		m_pContext.SetHeaders(headers);
+		
 		if (webConnectInfo.m_aParameters)
 		{
 			int paramCount = webConnectInfo.m_aParameters.Count();
@@ -349,7 +424,7 @@ class EDF_WebProxyDbDriver : EDF_DbDriver
 		typename entityType = entity.Type();
 		string request = string.Format("%1/%2%3", EDF_DbName.Get(entityType), entity.GetId(), m_sAddtionalParams);
 		string data = Serialize(entity);
-		m_pContext.PUT(new EDF_WebProxyDbDriverCallback(callback), request, data);
+		m_pContext.PUT(new EDF_WebProxyDbDriverCallback(callback, verb: "PUT", url: request), request, data);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -365,7 +440,7 @@ class EDF_WebProxyDbDriver : EDF_DbDriver
 		}
 
 		string request = string.Format("%1/%2%3", EDF_DbName.Get(entityType), entityId, m_sAddtionalParams);
-		m_pContext.DELETE(new EDF_WebProxyDbDriverCallback(callback), request, string.Empty);
+		m_pContext.DELETE(new EDF_WebProxyDbDriverCallback(callback, verb: "DELETE", url: request), request, string.Empty);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -394,8 +469,8 @@ class EDF_WebProxyDbDriver : EDF_DbDriver
 		string data = Serialize(new EDF_WebProxyDbDriverFindRequest(condition, orderBy, limit, offset));
 		//Print(request);
 		//Print(data);
-		System.ExportToClipboard(data);
-		m_pContext.POST(new EDF_WebProxyDbDriverCallback(callback, entityType), request, data);
+		//System.ExportToClipboard(data);
+		m_pContext.POST(new EDF_WebProxyDbDriverCallback(callback, entityType, verb: "POST", url: request), request, data);
 	}
 
 	//------------------------------------------------------------------------------------------------

@@ -17,7 +17,7 @@ class EDF_DbRepositoryBase
 
 	//------------------------------------------------------------------------------------------------
 	//! Creation only through EDF_DbRepositoryFactory::GetRepository
-	protected void EDF_DbRepositoryBase();
+	/*protected void EDF_DbRepositoryBase(); --Hotfix for 1.0*/
 };
 
 class EDF_DbRepository<Class TEntityType> : EDF_DbRepositoryBase
@@ -172,7 +172,7 @@ class EDF_DbRepositoryRegistration
 
 		foreach (typename repositoryType : s_aRegistrationQueue)
 		{
-			Class reflectionInst = repositoryType.Spawn();
+			auto reflectionInst = repositoryType.Spawn();
 			if (!reflectionInst)
 				continue;
 

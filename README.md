@@ -11,6 +11,9 @@
 
 # Enfusion Database Framework
 
+> **Info**
+> This mod is permitted to be used for Make Arma Not War 2025 submissions and commercial use on monetized servers
+
 > **Warning**
 > This framework is still in **BETA**. Until version 1.0.0 there is no backward compatibility guarantee! Expect some bugs/performance issues and function signature updates until then. Feedback via [issue](https://github.com/Arkensor/EnfusionDatabaseFramework/issues) or [discussion](https://github.com/Arkensor/EnfusionDatabaseFramework/discussions) is welcome.
 
@@ -29,13 +32,13 @@
 - 🚧 Migrations between storage backends e.g. `JsonFile` <-> `Http:MySQL`
 
 ### Drivers
-- ✅ `InMemory` for unit testing purposes
-- ✅ `JsonFile` local `.json` files for workbench development and small data volumes
-- ✅ `BinaryFile` local `.bin` files, same purpose as JSON but much smaller in filesize.
+- ✅ [`InMemory`](docs/drivers/in-memory.md) for unit testing purposes
+- ✅ [`JsonFile`](docs/drivers/json-file.md) local `.json` files for workbench development and small data volumes
+- ✅ [`BinaryFile`](docs/drivers/binary-file.md) local `.bin` files, same purpose as JSON but much smaller in filesize.
 - 🚧 `BIBackend` local/cloud synced `.bin` files stored in the Bohemia Interactive session backend.
-- 🚧 `Http` a web API powered bridge to other external storage services such as SQL and document databases.
+- 🚧 `Http` a web API proxy to other external storage services such as SQL and document databases.
+    - ✅ Document Databases [`MongoDB`](docs/drivers/proxy-mongodb.md)
     - 🚧 SQL Databases `SQLite`, `MySQL`, `PostgreSQL`
-    - ✅ Document Databases [`MongoDB`](https://github.com/Arkensor/EnfusionDatabaseFramework.Drivers.WebProxy.MongoDB)
 
 ## 📖 Documentation
 Detailed information on the individual classes and best practices can be found [here](docs/index.md).
